@@ -187,9 +187,9 @@ SHAP visualizations are restricted to original biomarker and demographic feature
 ## Clone Repository
 
 ```bash
-git clone https://github.com/your-username/liver-cancer-sequential-ensemble.git
+git clone https://github.com/rakeshchandrajoshi/livercancer.git
 
-cd liver-cancer-sequential-ensemble
+cd livercancer
 ```
 
 ---
