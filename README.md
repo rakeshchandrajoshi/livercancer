@@ -74,7 +74,7 @@ Target variable:
 # Repository Structure
 
 ```text
-liver-cancer-sequential-ensemble/
+livercancer/
 │
 ├── README.md
 ├── requirements.txt
