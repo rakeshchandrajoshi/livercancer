@@ -1,43 +1,111 @@
-import os
-import joblib
-import numpy as np
-import pandas as pd
+# # ============================================================
+# # SHAP EXPLAINABILITY
+# # SHAP values are computed using the final ensemble classifier.
+# # For interpretability, SHAP visualizations are restricted to
+# # the original biomarker and demographic features:
+# # Age, Sex, Beta_HCG, AFP, and PD-L1.
+# # ============================================================
+
 import shap
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
-from utils import reconstruct_augmented_features
+# # ------------------------------------------------------------
+# # Reconstruct augmented ensemble feature space
+# # exactly as used by final M3 classifier
+# # ------------------------------------------------------------
+
+X_scaled = final_model.scaler.transform(X)
+
+# Stage 1: M1 prediction
+pred1 = final_model.M1.predict(X_scaled)
+pred1 = np.asarray(pred1).ravel()
+
+X_stage2 = np.column_stack([
+    X_scaled,
+    pred1
+])
+
+# Stage 2: M7 prediction
+pred2 = final_model.M7.predict(X_stage2)
+pred2 = np.asarray(pred2).ravel()
+
+X_stage3 = np.column_stack([
+    X_stage2,
+    pred2
+])
 
 
-os.makedirs("results", exist_ok=True)
 
-data = joblib.load("outputs/preprocessed_data.pkl")
-model_bundle = joblib.load("models/final_sequential_M1_M7_M3_model.pkl")
-
-X = data["X"]
-feature_names_original = model_bundle["feature_names_original"]
-grade_encoder = model_bundle["grade_encoder"]
-final_model = model_bundle["model"]
-
-X_stage3 = reconstruct_augmented_features(
-    final_model=final_model,
-    X=X
-)
+# ============================================================
+# SHAP EXPLAINABILITY
+# ============================================================
 
 explainer = shap.TreeExplainer(final_model.M3)
 
-shap_values = explainer.shap_values(X_stage3)
+shap_values_raw = explainer.shap_values(X_stage3)
 
 n_original_features = len(feature_names_original)
 
 X_visualization = X_stage3[:, :n_original_features]
 
-if isinstance(shap_values, list):
+# ------------------------------------------------------------
+# Convert SHAP output into multiclass-safe list format
+# Each element must be: n_samples × n_original_features
+# ------------------------------------------------------------
+
+if isinstance(shap_values_raw, list):
+
     shap_values_visualization = [
         sv[:, :n_original_features]
-        for sv in shap_values
+        for sv in shap_values_raw
     ]
+
 else:
-    shap_values_visualization = shap_values[:, :, :n_original_features]
+
+    shap_values_raw = np.asarray(shap_values_raw)
+
+    # New SHAP format:
+    # n_samples × n_features × n_classes
+    if shap_values_raw.ndim == 3 and shap_values_raw.shape[1] == X_stage3.shape[1]:
+
+        shap_values_visualization = [
+            shap_values_raw[:, :n_original_features, class_idx]
+            for class_idx in range(shap_values_raw.shape[2])
+        ]
+
+    # Alternative SHAP format:
+    # n_classes × n_samples × n_features
+    elif shap_values_raw.ndim == 3 and shap_values_raw.shape[2] == X_stage3.shape[1]:
+
+        shap_values_visualization = [
+            shap_values_raw[class_idx, :, :n_original_features]
+            for class_idx in range(shap_values_raw.shape[0])
+        ]
+
+    # Binary / single-output format
+    elif shap_values_raw.ndim == 2:
+
+        shap_values_visualization = shap_values_raw[:, :n_original_features]
+
+    else:
+        raise ValueError(
+            f"Unexpected SHAP shape: {shap_values_raw.shape}"
+        )
+
+
+# ------------------------------------------------------------
+# Debug shape check
+# ------------------------------------------------------------
+
+print("X_visualization shape:", X_visualization.shape)
+
+if isinstance(shap_values_visualization, list):
+    for i, sv in enumerate(shap_values_visualization):
+        print(f"SHAP class {i} shape:", sv.shape)
+else:
+    print("SHAP shape:", shap_values_visualization.shape)
 
 
 # ============================================================
@@ -53,7 +121,7 @@ shap.summary_plot(
 )
 
 plt.savefig(
-    "results/SHAP_global_feature_importance.png",
+    "SHAP_global_feature_importance.png",
     dpi=300,
     bbox_inches="tight"
 )
@@ -62,7 +130,49 @@ plt.close()
 
 
 # ============================================================
-# SHAP MEAN VALUE BY GRADE
+# SHAP SUMMARY DOT PLOT
+# For multiclass, plot class-wise summary plots
+# ============================================================
+
+if isinstance(shap_values_visualization, list):
+
+    for class_idx, sv in enumerate(shap_values_visualization):
+
+        shap.summary_plot(
+            sv,
+            X_visualization,
+            feature_names=feature_names_original,
+            show=False
+        )
+
+        plt.savefig(
+            f"SHAP_summary_dot_plot_class_{class_idx}.png",
+            dpi=300,
+            bbox_inches="tight"
+        )
+
+        plt.close()
+
+else:
+
+    shap.summary_plot(
+        shap_values_visualization,
+        X_visualization,
+        feature_names=feature_names_original,
+        show=False
+    )
+
+    plt.savefig(
+        "SHAP_summary_dot_plot.png",
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close()
+
+
+# ============================================================
+# MEAN SHAP VALUE BY GRADE
 # ============================================================
 
 grade_labels = [
@@ -77,9 +187,9 @@ mean_shap_by_grade = pd.DataFrame(
 
 if isinstance(shap_values_visualization, list):
 
-    for class_index, class_label in enumerate(grade_labels):
+    for class_idx, class_label in enumerate(grade_labels):
 
-        class_shap = shap_values_visualization[class_index]
+        class_shap = shap_values_visualization[class_idx]
 
         mean_shap_by_grade.loc[class_label, :] = np.mean(
             np.abs(class_shap),
@@ -88,14 +198,10 @@ if isinstance(shap_values_visualization, list):
 
 else:
 
-    for class_index, class_label in enumerate(grade_labels):
-
-        class_shap = shap_values_visualization[:, :, class_index]
-
-        mean_shap_by_grade.loc[class_label, :] = np.mean(
-            np.abs(class_shap),
-            axis=0
-        )
+    mean_shap_by_grade.loc[grade_labels[0], :] = np.mean(
+        np.abs(shap_values_visualization),
+        axis=0
+    )
 
 mean_shap_by_grade = mean_shap_by_grade.astype(float)
 
@@ -108,10 +214,6 @@ for label in grade_labels:
         display_grade_labels.append(f"Grade {label}")
 
 mean_shap_by_grade.index = display_grade_labels
-
-mean_shap_by_grade.to_csv(
-    "results/SHAP_mean_by_grade.csv"
-)
 
 plt.figure(figsize=(9, 5))
 
@@ -131,31 +233,11 @@ plt.grid(True, alpha=0.3)
 plt.tight_layout()
 
 plt.savefig(
-    "results/SHAP_mean_by_grade.png",
+    "SHAP_mean_by_grade.png",
     dpi=300,
     bbox_inches="tight"
 )
 
 plt.close()
 
-
-# ============================================================
-# SHAP SUMMARY DOT PLOT
-# ============================================================
-
-shap.summary_plot(
-    shap_values_visualization,
-    X_visualization,
-    feature_names=feature_names_original,
-    show=False
-)
-
-plt.savefig(
-    "results/SHAP_summary_dot_plot.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-
-plt.close()
-
-print("Saved SHAP outputs in results/")
+print("Saved SHAP plots successfully.")
