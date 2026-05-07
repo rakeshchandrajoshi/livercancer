@@ -76,24 +76,24 @@ Target variable:
 ```text
 livercancer/
 │
-├── README.md
-├── requirements.txt
-│
 ├── data/
 │   └── liver_cancer_data_male_female.csv
 │
 ├── src/
+│   ├── utils.py
 │   ├── 01_preprocessing.py
 │   ├── 02_evolutionary_optimization.py
 │   ├── 03_sequential_ensemble.py
 │   ├── 04_shap_analysis.py
-│   └── utils.py
+│   └── 05_statistical_analysis.py
 │
 ├── outputs/
-│
 ├── models/
+├── results/
 │
-└── results/
+├── requirements.txt
+├── README.md
+└── LICENSE
 ```
 
 ---
